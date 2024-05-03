@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/10.3.0/math.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quaternion@1.5.1/quaternion.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/numeric@1.2.6/numeric-1.2.6.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+              "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+              "three/": "https://unpkg.com/three@0.160.0/"
+            }
+        }
+    </script>
+</head>
+<body>
+<script type="module">
+    import {ThreeEngine} from "../js/utils/utils_three.js";
+    import {B1Z1Robot, XArm7Robot} from "../js/utils/utils_robot.js";
+    import {mul_matrix_matrix} from "../js/utils/utils_math.js";
+
+    import {get_default_lil_gui} from "../js/utils/utils_three.js";
+    function createSE3Matrix(R, t) {
+        return [
+            [R[0][0], R[0][1], R[0][2], t[0]],
+            [R[1][0], R[1][1], R[1][2], t[1]],
+            [R[2][0], R[2][1], R[2][2], t[2]],
+            [0, 0, 0, 1]
+        ];
+    }
+    function rotationMatrixFromAxisAngle(axis, angle) {
+        const [ux, uy, uz] = axis;
+        const sinTheta = Math.sin(angle);
+        const cosTheta = Math.cos(angle);
+        const oneMinusCosTheta = 1 - cosTheta;
+
+        return [
+            [
+                cosTheta + ux * ux * oneMinusCosTheta,
+                ux * uy * oneMinusCosTheta - uz * sinTheta,
+                ux * uz * oneMinusCosTheta + uy * sinTheta
+            ],
+            [
+                uy * ux * oneMinusCosTheta + uz * sinTheta,
+                cosTheta + uy * uy * oneMinusCosTheta,
+                uy * uz * oneMinusCosTheta - ux * sinTheta
+            ],
+            [
+                uz * ux * oneMinusCosTheta - uy * sinTheta,
+                uz * uy * oneMinusCosTheta + ux * sinTheta,
+                cosTheta + uz * uz * oneMinusCosTheta
+            ]
+        ];
+    }
+    function getRevoluteJointTransform(axis, angle) {
+        let R = rotationMatrixFromAxisAngle(axis, angle);
+        let t = [0, 0, 0];
+        return createSE3Matrix(R, t);
+    }
+    function identityMatrix() {
+        return [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ];
+    }
+    function translationMatrixFromAxisDisplacement(axis, displacement) {
+        // Normalize the axis vector to ensure it's a unit vector
+        let magnitude = Math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        let normalizedAxis = axis.map(component => component / magnitude);
+
+        // Calculate the translation components along the normalized axis
+        let tx = normalizedAxis[0] * displacement;
+        let ty = normalizedAxis[1] * displacement;
+        let tz = normalizedAxis[2] * displacement;
+
+        // Create the translation matrix in homogeneous coordinates
+        return [
+            [1, 0, 0, tx],
+            [0, 1, 0, ty],
+            [0, 0, 1, tz],
+            [0, 0, 0, 1]
+        ];
+    }
+    function getPrismaticJointTransform(axis, displacement) {
+        return translationMatrixFromAxisDisplacement(axis, displacement);  // Implement this function based on axis and displacement
+    }
+    let engine = ThreeEngine.new_default_3d();
+    let robot = new XArm7Robot();
+    robot.spawn_robot(engine);
+
+    let joints = robot.get_robot_joints();
+
+
+    // if you want to use the XArm7 robot:
+
+
+    let settings = {
+        dof0: 0,
+        dof1: 0,
+        dof2: 0,
+        dof3: 0,
+        dof4: 0,
+        dof5: 0,
+        dof6: 0,
+        dof7: 0
+    };
+    let gui = get_default_lil_gui()
+    gui.add( settings, 'dof0', joints[1].lower_bound, joints[1].upper_bound);
+    gui.add( settings, 'dof1', joints[3].lower_bound, joints[3].upper_bound);
+    gui.add( settings, 'dof2', joints[4].lower_bound, joints[4].upper_bound);
+    gui.add( settings, 'dof3', joints[5].lower_bound, joints[5].upper_bound);
+    gui.add( settings, 'dof4',joints[6].lower_bound, joints[6].upper_bound);
+    gui.add( settings, 'dof5', joints[7].lower_bound, joints[7].upper_bound);
+    gui.add( settings, 'dof6', joints[8].lower_bound, joints[8].upper_bound);
+    gui.add( settings, 'dof7', joints[9].lower_bound, joints[9].upper_bound);
+
+    // or, if you want to use the B1Z1 robot, comment the previous robot and uncomment this line:
+    // let robot = new B1Z1Robot();
+
+
+    function fk( settings) {
+        let links = robot.get_robot_links();
+        let output_poses = [];
+        for(let i = 0; i < links.length; i++) {
+            output_poses.push( identityMatrix() );
+        }
+
+        let kh = robot.kinematic_hierarchy;
+        kh.forEach(layer => {
+            layer.forEach(link_idx =>{
+                let curr_link = links[link_idx];
+                let parent_link_idx = curr_link.parent_link_idx;
+                let parent_joint_idx = curr_link.parent_joint_idx;
+                let curr_joint = joints[parent_joint_idx];
+                if (curr_joint) {
+                    let joint_type = curr_joint.joint_type_string;
+                    let curr_pose = output_poses[parent_link_idx];
+                    let T_c = curr_joint.xyz_rpy_SE3_matrix;
+                    curr_pose = mul_matrix_matrix(curr_pose, T_c);
+                    // T_v will depend on some values in the state
+                    let T_v;
+                    if (joint_type === 'revolute') {
+                        let joint_value = settings[`dof${curr_joint.dof_idx}`];
+                        T_v = getRevoluteJointTransform(curr_joint.axis, joint_value);
+                    } else if (joint_type === 'prismatic') {
+                        let joint_value = settings[`dof${curr_joint.dof_idx}`];
+                        T_v = getPrismaticJointTransform(curr_joint.axis, joint_value);
+                    } else if(joint_type === 'fixed'){
+                        T_v = identityMatrix();
+                    }
+                    output_poses[link_idx] = mul_matrix_matrix(curr_pose, T_v);
+
+                }
+            });
+        });
+        return output_poses;
+    }
+    function set_robot_pose(output_poses) {
+        for( let i = 0; i< output_poses.length; i++) {
+            robot.set_link_mesh_pose_from_SE3_matrix(engine, i, output_poses[i]);
+        }
+    }
+
+    engine.animation_loop(() => {
+        set_robot_pose(fk(settings));
+
+    })
+
+
+</script>
+</body>
+</html>
