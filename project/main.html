@@ -25,6 +25,8 @@
     import {B1Z1Robot, XArm7Robot} from "../js/utils/utils_robot.js";
     import {mul_matrix_matrix} from "../js/utils/utils_math.js";
 
+    import {OptimizationBFGS} from "../js/utils/utils_optimization.js";
+
     import {get_default_lil_gui} from "../js/utils/utils_three.js";
     function createSE3Matrix(R, t) {
         return [
@@ -112,15 +114,17 @@
         dof6: 0,
         dof7: 0
     };
+    let settings_pose = {
+        x:0,
+        y:0,
+        z:0
+    }
+
     let gui = get_default_lil_gui()
-    gui.add( settings, 'dof0', joints[1].lower_bound, joints[1].upper_bound);
-    gui.add( settings, 'dof1', joints[3].lower_bound, joints[3].upper_bound);
-    gui.add( settings, 'dof2', joints[4].lower_bound, joints[4].upper_bound);
-    gui.add( settings, 'dof3', joints[5].lower_bound, joints[5].upper_bound);
-    gui.add( settings, 'dof4',joints[6].lower_bound, joints[6].upper_bound);
-    gui.add( settings, 'dof5', joints[7].lower_bound, joints[7].upper_bound);
-    gui.add( settings, 'dof6', joints[8].lower_bound, joints[8].upper_bound);
-    gui.add( settings, 'dof7', joints[9].lower_bound, joints[9].upper_bound);
+    gui.add( settings_pose, 'x', -0.8, 0.8);
+    gui.add( settings_pose, 'y', -0.8, 0.8);
+    gui.add( settings_pose, 'z', 0, 0.8);
+
 
     // or, if you want to use the B1Z1 robot, comment the previous robot and uncomment this line:
     // let robot = new B1Z1Robot();
@@ -168,9 +172,27 @@
             robot.set_link_mesh_pose_from_SE3_matrix(engine, i, output_poses[i]);
         }
     }
+    function objectiveFunction(x) {
+        // Calculate forward kinematics
+        let fk_poses = fk(x);
 
+        // Extract position part of the end effector pose
+        let end_effector_pos = fk_poses[19].slice(0, 3).slice(0, 3); // Assuming [19] is the end effector link
+
+        // Calculate squared Euclidean distance to target position
+        let distance_squared = Math.pow(end_effector_pos[0] - settings_pose.x, 2) +
+            Math.pow(end_effector_pos[1] - settings_pose.y, 2) +
+            Math.pow(end_effector_pos[2] - settings_pose.z, 2);
+
+        return distance_squared;
+    }
+    let optimizer = new OptimizationBFGS(objectiveFunction, robot.num_joints);
     engine.animation_loop(() => {
-        set_robot_pose(fk(settings));
+        let initial_guess = fk(settings); // Initial joint angles
+        let result = optimizer.optimize(initial_guess);
+
+        // Set robot pose to the optimized joint angles
+        set_robot_pose(fk(result.solution));
 
     })
 
