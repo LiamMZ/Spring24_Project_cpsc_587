@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <title>Inverse Kinematics Solver</title>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
@@ -25,7 +25,7 @@
     import {B1Z1Robot, XArm7Robot} from "../js/utils/utils_robot.js";
     import {mul_matrix_matrix} from "../js/utils/utils_math.js";
 
-    import {OptimizationBFGS} from "../js/utils/utils_optimization.js";
+    import {OptimizationBFGS, optimization_bfgs} from "../js/utils/utils_optimization.js";
 
     import {get_default_lil_gui} from "../js/utils/utils_three.js";
     function createSE3Matrix(R, t) {
@@ -115,9 +115,9 @@
         dof7: 0
     };
     let settings_pose = {
-        x:0,
-        y:0,
-        z:0
+        x:0.1,
+        y:0.0,
+        z:0.0
     }
 
     let gui = get_default_lil_gui()
@@ -174,26 +174,39 @@
     }
     function objectiveFunction(x) {
         // Calculate forward kinematics
-        let fk_poses = fk(x);
-
+        for (let k = 0; k < 8; k++){
+            settings[`dof${k}`] = x[k];
+        }
+        let fk_poses = fk(settings);
+        // console.log(fk_poses.length)
         // Extract position part of the end effector pose
         let end_effector_pos = fk_poses[19].slice(0, 3).slice(0, 3); // Assuming [19] is the end effector link
+        let end_effector_position = [end_effector_pos[0][3], end_effector_pos[1][3], end_effector_pos[2][3]]; // Extract translation part
 
         // Calculate squared Euclidean distance to target position
-        let distance_squared = Math.pow(end_effector_pos[0] - settings_pose.x, 2) +
-            Math.pow(end_effector_pos[1] - settings_pose.y, 2) +
-            Math.pow(end_effector_pos[2] - settings_pose.z, 2);
-
+        let distance_squared = Math.pow(end_effector_position[0] - settings_pose.x, 2) +
+            Math.pow(end_effector_position[1] - settings_pose.y, 2) +
+            Math.pow(end_effector_position[2] - settings_pose.z, 2);
+        // console.log(distance_squared);
         return distance_squared;
     }
     let optimizer = new OptimizationBFGS(objectiveFunction, robot.num_joints);
+    let initial_guess = [[0.0],[ 0.0], [0.0], [0.0], [0.0], [0.0],[ 0.0], [0.0]];
     engine.animation_loop(() => {
-        let initial_guess = fk(settings); // Initial joint angles
-        let result = optimizer.optimize(initial_guess);
 
+        // let initial_guess = [[settings[`dof0`]],[settings[`dof1`]], [settings[`dof2`]], [settings[`dof3`]], [settings[`dof4`]], [settings[`dof5`]],[settings['dof6']], [settings['dof7']]];
+        console.log('settings');
+        console.log(settings);
+        console.log(initial_guess)
+        // let initial_guess = fk(settings); // Initial joint angles
+        let result = optimization_bfgs(objectiveFunction, initial_guess);
+        console.log(result);
+        for (let k = 0; k < 8; k++){
+            settings[`dof${k}`] = result[k];
+        }
         // Set robot pose to the optimized joint angles
-        set_robot_pose(fk(result.solution));
-
+        set_robot_pose(fk(settings));
+        initial_guess = result;
     })
 
 

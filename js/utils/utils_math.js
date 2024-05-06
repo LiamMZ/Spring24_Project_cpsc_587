@@ -156,7 +156,9 @@ export function normalized_matrix(m) {
 export function mul_matrix_matrix(m1, m2) {
     // m1 = roll_list_into_column_vec_matrix(m1);
     // m2 = roll_list_into_column_vec_matrix(m2);
+    // console.log('m1');
     // console.log(m1);
+    // console.log('m2');
     // console.log(m2);
 
     if (m1[0].length !== m2.length) {
