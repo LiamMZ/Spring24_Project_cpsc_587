@@ -102,7 +102,44 @@
 
 
     // if you want to use the XArm7 robot:
+    function createSE3Transformation(theta, phi, psi, x, y, z) {
+        // Convert degrees to radians
+        const thetaRad = theta; //* Math.PI / 180;
+        const phiRad = phi; //* Math.PI / 180;
+        const psiRad = psi; //* Math.PI / 180;
 
+        // Define the rotation matrices for ZYX Euler angles
+        const Rz = [
+            [Math.cos(thetaRad), -Math.sin(thetaRad), 0],
+            [Math.sin(thetaRad), Math.cos(thetaRad), 0],
+            [0, 0, 1]
+        ];
+
+        const Ry = [
+            [Math.cos(phiRad), 0, Math.sin(phiRad)],
+            [0, 1, 0],
+            [-Math.sin(phiRad), 0, Math.cos(phiRad)]
+        ];
+
+        const Rx = [
+            [1, 0, 0],
+            [0, Math.cos(psiRad), -Math.sin(psiRad)],
+            [0, Math.sin(psiRad), Math.cos(psiRad)]
+        ];
+
+        // Combine rotation matrices: R = Rz * Ry * Rx
+        const Rzy = mul_matrix_matrix(Rz, Ry);
+        const Rzyx = mul_matrix_matrix(Rzy, Rx);
+
+        // The translation vector
+        const t = [x, y, z];
+
+        // Return the rotation matrix and translation vector
+        return {
+            rotationMatrix: Rzyx,
+            translationVector: t
+        };
+    }
 
     let settings = {
         dof0: 0,
@@ -117,17 +154,113 @@
     let settings_pose = {
         x:0.1,
         y:0.0,
-        z:0.0
+        z:0.0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0
     }
 
     let gui = get_default_lil_gui()
     gui.add( settings_pose, 'x', -0.8, 0.8);
     gui.add( settings_pose, 'y', -0.8, 0.8);
     gui.add( settings_pose, 'z', 0, 0.8);
-
+    gui.add( settings_pose, 'roll', -Math.PI, Math.PI );
+    gui.add( settings_pose, 'pitch', -Math.PI, Math.PI );
+    gui.add( settings_pose, 'yaw', -Math.PI, Math.PI );
 
     // or, if you want to use the B1Z1 robot, comment the previous robot and uncomment this line:
     // let robot = new B1Z1Robot();
+
+
+
+    function transposeMatrix(matrix) {
+        // Assuming matrix is a 3x3 matrix
+        let transposed = [
+            [matrix[0][0], matrix[1][0], matrix[2][0]],
+            [matrix[0][1], matrix[1][1], matrix[2][1]],
+            [matrix[0][2], matrix[1][2], matrix[2][2]]
+        ];
+        return transposed;
+    }
+
+    function multiplyMatrixAndVector(matrix, vector) {
+        // Assuming matrix is a 3x3 matrix and vector is a 3-element array
+        return matrix.map(row => row.reduce((sum, cell, i) => sum + cell * vector[i], 0));
+    }
+
+    function negateVector(vector) {
+        // Assuming vector is a 3-element array
+        return vector.map(component => -component);
+    }
+
+    function inverseSE3(R, t) {
+        // Transpose the rotation matrix R
+        const R_transpose = transposeMatrix(R);
+
+        // Compute -t and then R_transpose * (-t)
+        const negated_t = negateVector(t);
+        const transformed_t = multiplyMatrixAndVector(R_transpose, negated_t);
+
+        // Construct the inverse SE(3) matrix
+        return {
+            rotationMatrix: R_transpose,
+            translationVector: transformed_t
+        };
+    }
+
+    function se3_log(se3_matrix) {
+        // Extract rotation matrix R
+        let R = [
+            [se3_matrix[0][0], se3_matrix[0][1], se3_matrix[0][2]],
+            [se3_matrix[1][0], se3_matrix[1][1], se3_matrix[1][2]],
+            [se3_matrix[2][0], se3_matrix[2][1], se3_matrix[2][2]]
+        ];
+
+        // Extract translation vector t
+        let t = [se3_matrix[0][3], se3_matrix[1][3], se3_matrix[2][3]];
+
+        // Compute skew-symmetric matrix A from R
+        let A = [
+            [0, -R[2][1], R[1][2]],
+            [R[2][0], 0, -R[0][2]],
+            [-R[1][0], R[0][1], 0]
+        ];
+
+        // Compute norm of skew-symmetric matrix A
+        let u = [
+            A[2][1] - A[1][2],
+            A[0][2] - A[2][0],
+            A[1][0] - A[0][1]
+        ];
+        let beta = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+
+        // Compute p and q coefficients
+        let p, q;
+        if (Math.abs(beta) < 0.0001) {
+            p = 1 / 2 - beta * beta / 24 + beta * beta * beta * beta / 720;
+            q = 1 / 6 - beta * beta / 120 + beta * beta * beta * beta / 5040;
+        } else {
+            p = (1 - Math.cos(beta)) / (beta * beta);
+            q = (beta - Math.sin(beta)) / (beta * beta * beta);
+        }
+
+        // Compute C matrix
+        let C = [
+            [1 + p * A[0][0] + q * A[0][0] * A[0][0], p * A[0][1] + q * A[0][0] * A[1][0], p * A[0][2] + q * A[0][0] * A[2][0]],
+            [p * A[1][0] + q * A[1][0] * A[0][1], 1 + p * A[1][1] + q * A[1][1] * A[1][1], p * A[1][2] + q * A[1][1] * A[2][1]],
+            [p * A[2][0] + q * A[2][0] * A[0][2], p * A[2][1] + q * A[2][1] * A[1][2], 1 + p * A[2][2] + q * A[2][2] * A[2][2]]
+        ];
+
+        // Compute b
+        let b = [
+            C[0][0] * t[0] + C[0][1] * t[1] + C[0][2] * t[2],
+            C[1][0] * t[0] + C[1][1] * t[1] + C[1][2] * t[2],
+            C[2][0] * t[0] + C[2][1] * t[1] + C[2][2] * t[2]
+        ];
+
+        // Return the logarithm map
+        return { A: A, b: b };
+    }
 
 
     function fk( settings) {
@@ -168,8 +301,23 @@
         return output_poses;
     }
     function set_robot_pose(output_poses) {
+        const disp = .01;
         for( let i = 0; i< output_poses.length; i++) {
             robot.set_link_mesh_pose_from_SE3_matrix(engine, i, output_poses[i]);
+            // let translation = [output_poses[i][0][3], output_poses[i][1][3], output_poses[i][2][3]]
+            // let rotation = [[output_poses[i][0][0], output_poses[i][0][1], output_poses[i][0][2]],
+            //     [output_poses[i][1][0], output_poses[i][1][1], output_poses[i][1][2]],
+            //     [output_poses[i][2][0], output_poses[i][2][1], output_poses[i][2][2]]];
+            // const x = [translation[0] + disp,0,0];
+            // const y = [0,translation[1] + disp,0];
+            // const z = [0,0,translation[2] + disp];
+            //
+            // const new_x = multiplyMatrixAndVector(rotation, x);
+            // const new_y = multiplyMatrixAndVector(rotation, y);
+            // const new_z = multiplyMatrixAndVector(rotation, z)
+            // engine.draw_debug_vector(translation.slice(0,3), new_x.slice(0,3), 0.01, 0.15, "red");
+            // engine.draw_debug_vector(translation.slice(0,3), new_y.slice(0,3), 0.01, 0.15, "green");
+            // engine.draw_debug_vector(translation.slice(0,3), new_z.slice(0,3), 0.01, 0.15, "blue");
         }
     }
     function objectiveFunction(x) {
@@ -180,27 +328,40 @@
         let fk_poses = fk(settings);
         // console.log(fk_poses.length)
         // Extract position part of the end effector pose
-        let end_effector_pos = fk_poses[19].slice(0, 3).slice(0, 3); // Assuming [19] is the end effector link
-        let end_effector_position = [end_effector_pos[0][3], end_effector_pos[1][3], end_effector_pos[2][3]]; // Extract translation part
+        let end_effector_pose = fk_poses[19]; // Assuming [19] is the end effector link
+        let end_effector_position = [end_effector_pose[0][3], end_effector_pose[1][3], end_effector_pose[2][3]]; // Extract translation part
 
-        // Calculate squared Euclidean distance to target position
-        let distance_squared = Math.pow(end_effector_position[0] - settings_pose.x, 2) +
-            Math.pow(end_effector_position[1] - settings_pose.y, 2) +
-            Math.pow(end_effector_position[2] - settings_pose.z, 2);
-        // console.log(distance_squared);
-        return distance_squared;
+        let end_effector_rotation = [
+            [end_effector_pose[0][0], end_effector_pose[0][1], end_effector_pose[0][2]],
+            [end_effector_pose[1][0], end_effector_pose[1][1], end_effector_pose[1][2]],
+            [end_effector_pose[2][0], end_effector_pose[2][1], end_effector_pose[2][2]]
+        ]; // Extract rotation part (SO(3) matrix)
+        const {rotationMatrix, translationVector} =createSE3Transformation(settings_pose.roll, settings_pose.pitch, settings_pose.yaw,
+            settings_pose.x, settings_pose.y, settings_pose.z);
+
+        const target_se3 = createSE3Matrix(rotationMatrix, translationVector);
+        let ee_se3_inv = inverseSE3(end_effector_rotation, end_effector_position);
+        ee_se3_inv = createSE3Matrix(ee_se3_inv['rotationMatrix'], ee_se3_inv['translationVector']);
+
+        const disp_se3 = mul_matrix_matrix(ee_se3_inv, target_se3);
+        let log_disp = se3_log(disp_se3);
+        log_disp = createSE3Matrix(log_disp.A, log_disp.b);
+        // Compute Frobenius norm of the logarithm
+        let norm = 0;
+        for (let i = 0; i < log_disp.length; i++) {
+            for (let j = 0; j < log_disp[0].length; j++) {
+                norm += log_disp[i][j] * log_disp[i][j];
+            }
+        }
+
+        return Math.sqrt(norm);
     }
     let optimizer = new OptimizationBFGS(objectiveFunction, robot.num_joints);
     let initial_guess = [[0.0],[ 0.0], [0.0], [0.0], [0.0], [0.0],[ 0.0], [0.0]];
     engine.animation_loop(() => {
 
-        // let initial_guess = [[settings[`dof0`]],[settings[`dof1`]], [settings[`dof2`]], [settings[`dof3`]], [settings[`dof4`]], [settings[`dof5`]],[settings['dof6']], [settings['dof7']]];
-        console.log('settings');
-        console.log(settings);
-        console.log(initial_guess)
-        // let initial_guess = fk(settings); // Initial joint angles
         let result = optimization_bfgs(objectiveFunction, initial_guess);
-        console.log(result);
+        // console.log(result);
         for (let k = 0; k < 8; k++){
             settings[`dof${k}`] = result[k];
         }
