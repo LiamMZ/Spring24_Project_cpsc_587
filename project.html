@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>CPSC 487/587</title>
+    <meta charset="UTF-8">
+    <title>Inverse Kinematics Solver</title>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
@@ -20,13 +21,343 @@
 </head>
 <body>
 <script type="module">
-    import {ThreeEngine} from "./js/utils/utils_three.js";
+    import {ThreeEngine} from "../js/utils/utils_three.js";
+    import {B1Z1Robot, XArm7Robot} from "../js/utils/utils_robot.js";
+    import {mul_matrix_matrix} from "../js/utils/utils_math.js";
 
+    import {OptimizationBFGS, optimization_bfgs} from "../js/utils/utils_optimization.js";
+
+    import {get_default_lil_gui} from "../js/utils/utils_three.js";
+    function createSE3Matrix(R, t) {
+        return [
+            [R[0][0], R[0][1], R[0][2], t[0]],
+            [R[1][0], R[1][1], R[1][2], t[1]],
+            [R[2][0], R[2][1], R[2][2], t[2]],
+            [0, 0, 0, 1]
+        ];
+    }
+    function rotationMatrixFromAxisAngle(axis, angle) {
+        const [ux, uy, uz] = axis;
+        const sinTheta = Math.sin(angle);
+        const cosTheta = Math.cos(angle);
+        const oneMinusCosTheta = 1 - cosTheta;
+
+        return [
+            [
+                cosTheta + ux * ux * oneMinusCosTheta,
+                ux * uy * oneMinusCosTheta - uz * sinTheta,
+                ux * uz * oneMinusCosTheta + uy * sinTheta
+            ],
+            [
+                uy * ux * oneMinusCosTheta + uz * sinTheta,
+                cosTheta + uy * uy * oneMinusCosTheta,
+                uy * uz * oneMinusCosTheta - ux * sinTheta
+            ],
+            [
+                uz * ux * oneMinusCosTheta - uy * sinTheta,
+                uz * uy * oneMinusCosTheta + ux * sinTheta,
+                cosTheta + uz * uz * oneMinusCosTheta
+            ]
+        ];
+    }
+
+    function getRevoluteJointTransform(axis, angle) {
+        let R = rotationMatrixFromAxisAngle(axis, angle);
+        let t = [0, 0, 0];
+        return createSE3Matrix(R, t);
+    }
+    function identityMatrix() {
+        return [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ];
+    }
+    function translationMatrixFromAxisDisplacement(axis, displacement) {
+        // Normalize the axis vector to ensure it's a unit vector
+        let magnitude = Math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        let normalizedAxis = axis.map(component => component / magnitude);
+
+        // Calculate the translation components along the normalized axis
+        let tx = normalizedAxis[0] * displacement;
+        let ty = normalizedAxis[1] * displacement;
+        let tz = normalizedAxis[2] * displacement;
+
+        // Create the translation matrix in homogeneous coordinates
+        return [
+            [1, 0, 0, tx],
+            [0, 1, 0, ty],
+            [0, 0, 1, tz],
+            [0, 0, 0, 1]
+        ];
+    }
+    function getPrismaticJointTransform(axis, displacement) {
+        return translationMatrixFromAxisDisplacement(axis, displacement);  // Implement this function based on axis and displacement
+    }
     let engine = ThreeEngine.new_default_3d();
+    let robot = new XArm7Robot();
+    robot.spawn_robot(engine);
 
-    engine.animation_loop( ()  => {
+    let joints = robot.get_robot_joints();
 
-    });
+    function rotationMatrixFromEulerAngles(roll, pitch, yaw) {
+        // Convert roll, pitch, yaw from radians
+        const cr = Math.cos(roll);
+        const sr = Math.sin(roll);
+        const cp = Math.cos(pitch);
+        const sp = Math.sin(pitch);
+        const cy = Math.cos(yaw);
+        const sy = Math.sin(yaw);
+
+        // Calculate the rotation matrix elements
+        const R11 = cy * cp;
+        const R12 = cy * sp * sr - sy * cr;
+        const R13 = cy * sp * cr + sy * sr;
+        const R21 = sy * cp;
+        const R22 = sy * sp * sr + cy * cr;
+        const R23 = sy * sp * cr - cy * sr;
+        const R31 = -sp;
+        const R32 = cp * sr;
+        const R33 = cp * cr;
+
+        // Construct the rotation matrix
+        return [
+            [R11, R12, R13],
+            [R21, R22, R23],
+            [R31, R32, R33]
+        ];
+    }
+
+
+    // if you want to use the XArm7 robot:
+    function createSE3Transformation(theta, phi, psi, x, y, z) {
+
+        const Rzyx = rotationMatrixFromEulerAngles(theta, phi, psi);
+        // The translation vector
+        const t = [x, y, z];
+
+        // Return the rotation matrix and translation vector
+        return {
+            rotationMatrix: Rzyx,
+            translationVector: t
+        };
+    }
+
+    let settings = {
+        dof0: 0,
+        dof1: 0,
+        dof2: 0,
+        dof3: 0,
+        dof4: 0,
+        dof5: 0,
+        dof6: 0,
+        dof7: 0
+    };
+    let settings_pose = {
+        x:0.1,
+        y:0.0,
+        z:0.0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0
+    }
+
+    let gui = get_default_lil_gui()
+    gui.add( settings_pose, 'x', -0.8, 0.8);
+    gui.add( settings_pose, 'y', -0.8, 0.8);
+    gui.add( settings_pose, 'z', 0, 0.8);
+    gui.add( settings_pose, 'roll', -Math.PI, Math.PI );
+    gui.add( settings_pose, 'pitch', -Math.PI, Math.PI );
+    gui.add( settings_pose, 'yaw', -Math.PI, Math.PI );
+
+    // or, if you want to use the B1Z1 robot, comment the previous robot and uncomment this line:
+    // let robot = new B1Z1Robot();
+
+
+
+    function transposeMatrix(matrix) {
+        // Assuming matrix is a 3x3 matrix
+        let transposed = [
+            [matrix[0][0], matrix[1][0], matrix[2][0]],
+            [matrix[0][1], matrix[1][1], matrix[2][1]],
+            [matrix[0][2], matrix[1][2], matrix[2][2]]
+        ];
+        return transposed;
+    }
+
+    function multiplyMatrixAndVector(matrix, vector) {
+        // Assuming matrix is a 3x3 matrix and vector is a 3-element array
+        return matrix.map(row => row.reduce((sum, cell, i) => sum + cell * vector[i], 0));
+    }
+
+    function negateVector(vector) {
+        // Assuming vector is a 3-element array
+        return vector.map(component => -component);
+    }
+
+    function inverseSE3(R, t) {
+        // Transpose the rotation matrix R
+        const R_transpose = transposeMatrix(R);
+
+        // Compute -t and then R_transpose * (-t)
+        const negated_t = negateVector(t);
+        const transformed_t = multiplyMatrixAndVector(R_transpose, negated_t);
+
+        // Construct the inverse SE(3) matrix
+        return {
+            rotationMatrix: R_transpose,
+            translationVector: transformed_t
+        };
+    }
+
+    function se3_log(se3_matrix) {
+        // Extract rotation matrix R
+        let R = [
+            [se3_matrix[0][0], se3_matrix[0][1], se3_matrix[0][2]],
+            [se3_matrix[1][0], se3_matrix[1][1], se3_matrix[1][2]],
+            [se3_matrix[2][0], se3_matrix[2][1], se3_matrix[2][2]]
+        ];
+
+        // Extract translation vector t
+        let t = [se3_matrix[0][3], se3_matrix[1][3], se3_matrix[2][3]];
+
+        // Compute skew-symmetric matrix A from R
+        let A = [
+            [0, -R[2][1], R[1][2]],
+            [R[2][0], 0, -R[0][2]],
+            [-R[1][0], R[0][1], 0]
+        ];
+
+        // Compute norm of skew-symmetric matrix A
+        let u = [
+            A[2][1] - A[1][2],
+            A[0][2] - A[2][0],
+            A[1][0] - A[0][1]
+        ];
+        let beta = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+
+        // Compute p and q coefficients
+        let p, q;
+        if (Math.abs(beta) < 0.0001) {
+            p = 1 / 2 - beta * beta / 24 + beta * beta * beta * beta / 720;
+            q = 1 / 6 - beta * beta / 120 + beta * beta * beta * beta / 5040;
+        } else {
+            p = (1 - Math.cos(beta)) / (beta * beta);
+            q = (beta - Math.sin(beta)) / (beta * beta * beta);
+        }
+
+        // Compute C matrix
+        let C = [
+            [1 + p * A[0][0] + q * A[0][0] * A[0][0], p * A[0][1] + q * A[0][0] * A[1][0], p * A[0][2] + q * A[0][0] * A[2][0]],
+            [p * A[1][0] + q * A[1][0] * A[0][1], 1 + p * A[1][1] + q * A[1][1] * A[1][1], p * A[1][2] + q * A[1][1] * A[2][1]],
+            [p * A[2][0] + q * A[2][0] * A[0][2], p * A[2][1] + q * A[2][1] * A[1][2], 1 + p * A[2][2] + q * A[2][2] * A[2][2]]
+        ];
+
+        // Compute b
+        let b = [
+            C[0][0] * t[0] + C[0][1] * t[1] + C[0][2] * t[2],
+            C[1][0] * t[0] + C[1][1] * t[1] + C[1][2] * t[2],
+            C[2][0] * t[0] + C[2][1] * t[1] + C[2][2] * t[2]
+        ];
+
+        // Return the logarithm map
+        return { A: A, b: b };
+    }
+
+
+    function fk( settings) {
+        let links = robot.get_robot_links();
+        let output_poses = [];
+        for(let i = 0; i < links.length; i++) {
+            output_poses.push( identityMatrix() );
+        }
+
+        let kh = robot.kinematic_hierarchy;
+        kh.forEach(layer => {
+            layer.forEach(link_idx =>{
+                let curr_link = links[link_idx];
+                let parent_link_idx = curr_link.parent_link_idx;
+                let parent_joint_idx = curr_link.parent_joint_idx;
+                let curr_joint = joints[parent_joint_idx];
+                if (curr_joint) {
+                    let joint_type = curr_joint.joint_type_string;
+                    let curr_pose = output_poses[parent_link_idx];
+                    let T_c = curr_joint.xyz_rpy_SE3_matrix;
+                    curr_pose = mul_matrix_matrix(curr_pose, T_c);
+                    // T_v will depend on some values in the state
+                    let T_v;
+                    if (joint_type === 'revolute') {
+                        let joint_value = settings[`dof${curr_joint.dof_idx}`];
+                        T_v = getRevoluteJointTransform(curr_joint.axis, joint_value);
+                    } else if (joint_type === 'prismatic') {
+                        let joint_value = settings[`dof${curr_joint.dof_idx}`];
+                        T_v = getPrismaticJointTransform(curr_joint.axis, joint_value);
+                    } else if(joint_type === 'fixed'){
+                        T_v = identityMatrix();
+                    }
+                    output_poses[link_idx] = mul_matrix_matrix(curr_pose, T_v);
+                    // output_poses[link_idx][1][3] = Math.min(Math.max(output_poses[link_idx][1][3], -0.8), 0.8);
+                }
+            });
+        });
+        return output_poses;
+    }
+    function set_robot_pose(output_poses) {
+        const disp = .001;
+        for( let i = 0; i< output_poses.length; i++) {
+            robot.set_link_mesh_pose_from_SE3_matrix(engine, i, output_poses[i]);
+        }
+    }
+    function objectiveFunction(x) {
+        // Calculate forward kinematics
+        for (let k = 0; k < 8; k++){
+            settings[`dof${k}`] = x[k];
+        }
+        let fk_poses = fk(settings);
+        // console.log(fk_poses.length)
+        // Extract position part of the end effector pose
+        let end_effector_pose = fk_poses[19]; // Assuming [19] is the end effector link
+        let end_effector_position = [end_effector_pose[0][3], end_effector_pose[1][3], end_effector_pose[2][3]]; // Extract translation part
+
+        let end_effector_rotation = [
+            [end_effector_pose[0][0], end_effector_pose[0][1], end_effector_pose[0][2]],
+            [end_effector_pose[1][0], end_effector_pose[1][1], end_effector_pose[1][2]],
+            [end_effector_pose[2][0], end_effector_pose[2][1], end_effector_pose[2][2]]
+        ]; // Extract rotation part (SO(3) matrix)
+        const {rotationMatrix, translationVector} =createSE3Transformation(settings_pose.roll, settings_pose.pitch, settings_pose.yaw,
+            settings_pose.x, settings_pose.y, settings_pose.z);
+
+        const target_se3 = createSE3Matrix(rotationMatrix, translationVector);
+        let ee_se3_inv = inverseSE3(end_effector_rotation, end_effector_position);
+        ee_se3_inv = createSE3Matrix(ee_se3_inv['rotationMatrix'], ee_se3_inv['translationVector']);
+
+        const disp_se3 = mul_matrix_matrix(ee_se3_inv, target_se3);
+        let log_disp = se3_log(disp_se3);
+        log_disp = createSE3Matrix(log_disp.A, log_disp.b);
+        let norm = 0;
+        for (let i = 0; i < log_disp.length; i++) {
+            for (let j = 0; j < log_disp[0].length; j++) {
+                norm += log_disp[i][j] * log_disp[i][j];
+            }
+        }
+
+        return Math.sqrt(norm);
+    }
+    let optimizer = new OptimizationBFGS(objectiveFunction, robot.num_joints);
+    let initial_guess = [[0.0],[ 0.0], [0.0], [0.0], [0.0], [0.0],[ 0.0], [0.0]];
+    engine.animation_loop(() => {
+
+        let result = optimization_bfgs(objectiveFunction, initial_guess);
+        // console.log(result);
+        for (let k = 0; k < 8; k++){
+            settings[`dof${k}`] = result[k];
+        }
+        // Set robot pose to the optimized joint angles
+        set_robot_pose(fk(settings));
+        initial_guess = result;
+    })
+
 
 </script>
 </body>
