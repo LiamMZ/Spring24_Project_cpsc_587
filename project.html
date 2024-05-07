@@ -21,13 +21,13 @@
 </head>
 <body>
 <script type="module">
-    import {ThreeEngine} from "../js/utils/utils_three.js";
-    import {B1Z1Robot, XArm7Robot} from "../js/utils/utils_robot.js";
-    import {mul_matrix_matrix} from "../js/utils/utils_math.js";
+    import {ThreeEngine} from "./js/utils/utils_three.js";
+    import {B1Z1Robot, XArm7Robot} from "./js/utils/utils_robot.js";
+    import {mul_matrix_matrix} from "./js/utils/utils_math.js";
 
-    import {OptimizationBFGS, optimization_bfgs} from "../js/utils/utils_optimization.js";
+    import {OptimizationBFGS, optimization_bfgs} from "./js/utils/utils_optimization.js";
 
-    import {get_default_lil_gui} from "../js/utils/utils_three.js";
+    import {get_default_lil_gui} from "./js/utils/utils_three.js";
     function createSE3Matrix(R, t) {
         return [
             [R[0][0], R[0][1], R[0][2], t[0]],
