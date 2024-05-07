@@ -60,7 +60,6 @@
             ]
         ];
     }
-
     function getRevoluteJointTransform(axis, angle) {
         let R = rotationMatrixFromAxisAngle(axis, angle);
         let t = [0, 0, 0];
@@ -101,39 +100,37 @@
 
     let joints = robot.get_robot_joints();
 
-    function rotationMatrixFromEulerAngles(roll, pitch, yaw) {
-        // Convert roll, pitch, yaw from radians
-        const cr = Math.cos(roll);
-        const sr = Math.sin(roll);
-        const cp = Math.cos(pitch);
-        const sp = Math.sin(pitch);
-        const cy = Math.cos(yaw);
-        const sy = Math.sin(yaw);
-
-        // Calculate the rotation matrix elements
-        const R11 = cy * cp;
-        const R12 = cy * sp * sr - sy * cr;
-        const R13 = cy * sp * cr + sy * sr;
-        const R21 = sy * cp;
-        const R22 = sy * sp * sr + cy * cr;
-        const R23 = sy * sp * cr - cy * sr;
-        const R31 = -sp;
-        const R32 = cp * sr;
-        const R33 = cp * cr;
-
-        // Construct the rotation matrix
-        return [
-            [R11, R12, R13],
-            [R21, R22, R23],
-            [R31, R32, R33]
-        ];
-    }
-
 
     // if you want to use the XArm7 robot:
     function createSE3Transformation(theta, phi, psi, x, y, z) {
+        // Convert degrees to radians
+        const thetaRad = theta; //* Math.PI / 180;
+        const phiRad = phi; //* Math.PI / 180;
+        const psiRad = psi; //* Math.PI / 180;
 
-        const Rzyx = rotationMatrixFromEulerAngles(theta, phi, psi);
+        // Define the rotation matrices for ZYX Euler angles
+        const Rz = [
+            [Math.cos(thetaRad), -Math.sin(thetaRad), 0],
+            [Math.sin(thetaRad), Math.cos(thetaRad), 0],
+            [0, 0, 1]
+        ];
+
+        const Ry = [
+            [Math.cos(phiRad), 0, Math.sin(phiRad)],
+            [0, 1, 0],
+            [-Math.sin(phiRad), 0, Math.cos(phiRad)]
+        ];
+
+        const Rx = [
+            [1, 0, 0],
+            [0, Math.cos(psiRad), -Math.sin(psiRad)],
+            [0, Math.sin(psiRad), Math.cos(psiRad)]
+        ];
+
+        // Combine rotation matrices: R = Rz * Ry * Rx
+        const Rzy = mul_matrix_matrix(Rz, Ry);
+        const Rzyx = mul_matrix_matrix(Rzy, Rx);
+
         // The translation vector
         const t = [x, y, z];
 
@@ -335,6 +332,7 @@
         const disp_se3 = mul_matrix_matrix(ee_se3_inv, target_se3);
         let log_disp = se3_log(disp_se3);
         log_disp = createSE3Matrix(log_disp.A, log_disp.b);
+        // Compute Frobenius norm of the logarithm
         let norm = 0;
         for (let i = 0; i < log_disp.length; i++) {
             for (let j = 0; j < log_disp[0].length; j++) {
